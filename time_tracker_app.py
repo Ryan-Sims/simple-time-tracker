@@ -5,7 +5,9 @@ import os
 import sys
 import subprocess
 import tempfile
+import tkinter
 from tkinter import messagebox
+import psutil
 
 my_app_id = 'RyanSims.TimeTracker' 
 try:
@@ -14,6 +16,7 @@ try:
 except (ImportError, AttributeError):
     # This will fail on non-Windows systems, which is fine
     pass
+
 
 # Configuration
 LOG_FILE = "time_log.csv"
@@ -35,6 +38,7 @@ class TimeTrackerApp(ctk.CTk):
         self.attributes('-topmost', True)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        # Class attributes
         self.running_project_code = None
         self.start_time = None
         self.recent_projects = self.load_recent_projects()
@@ -51,8 +55,8 @@ class TimeTrackerApp(ctk.CTk):
             
         self.after(100, lambda: self.project_entry.focus())
 
-    # Handles the window close event
     def on_closing(self):
+        # Handles the window close event
         if self.running_project_code:
             print("App closed with active timer. Saving entry...")
             self.stop_timer(is_closing=True)
@@ -196,22 +200,37 @@ class TimeTrackerApp(ctk.CTk):
             else: subprocess.run(["xdg-open", filepath], check=True)
         except Exception as e: print(f"Error opening file: {e}")
 
-# Main execution block with single-instance lock
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
+
+    if os.path.exists(LOCK_FILE_PATH):
+        # The lock file exists, so check if the process is still running
+        try:
+            with open(LOCK_FILE_PATH, 'r') as f:
+                old_pid = int(f.read())
+            
+            # Check if a process with the old PID is still running
+            if psutil.pid_exists(old_pid):
+                messagebox.showerror(
+                    "Application Already Running",
+                    "Another instance of Time Tracker is already running."
+                )
+                sys.exit(1)
+            else:
+                # The process is not running, so the lock file is stale.
+                print("Found a stale lock file. The application will start.")
+        except (IOError, ValueError):
+            # The lock file is corrupt or empty.
+            print("Found a corrupt lock file. The application will start.")
     
     try:
-        # Try to create and exclusively lock the file
-        lock_file = open(LOCK_FILE_PATH, 'x')
+        lock_file = open(LOCK_FILE_PATH, 'w')
+        lock_file.write(str(os.getpid()))
+        lock_file.flush() # Ensure the PID is written to disk immediately
         
-        # If we get here, we are the only instance. Start the app.
         app = TimeTrackerApp(lock_file_handle=lock_file)
         app.mainloop()
-
-    except FileExistsError:
-        # If the file already exists, another instance is running.
-        messagebox.showerror(
-            "Application Already Running",
-            "Another instance of Time Tracker is already running."
-        )
+    
+    except Exception as e:
+        messagebox.showerror("Application Error", f"An unexpected error occurred during startup: {e}")
         sys.exit(1)
