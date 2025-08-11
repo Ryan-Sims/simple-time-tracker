@@ -118,6 +118,7 @@ class TimeTrackerApp(ctk.CTk):
     def stop_timer(self, is_closing=False):
         if not self.running_project_code: return
         end_time = datetime.datetime.now()
+        
         log_entry = { 
             "project_code": [self.running_project_code], 
             "start_time": [self.start_time.strftime("%Y-%m-%d %H:%M:%S")], 
@@ -139,10 +140,7 @@ class TimeTrackerApp(ctk.CTk):
     def load_recent_projects(self):
         try:
             if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0: return []
-            
-            # Force the 'project_code' column to be read as a string
             df = pd.read_csv(LOG_FILE, dtype={'project_code': str})
-
             if df.empty: return []
             df['start_time'] = pd.to_datetime(df['start_time'])
             return df.sort_values(by='start_time', ascending=False)\
@@ -156,13 +154,17 @@ class TimeTrackerApp(ctk.CTk):
         if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
             messagebox.showinfo("Report", "Log file is empty.")
             return
+        
+        # --- UPDATED: Duration is now calculated here instead of read from the file ---
         df = pd.read_csv(LOG_FILE)
         if df.empty:
             messagebox.showinfo("Report", "Log file is empty.")
             return
+        
         df['start_time'] = pd.to_datetime(df['start_time'])
         df['end_time'] = pd.to_datetime(df['end_time'])
         df['duration_seconds'] = (df['end_time'] - df['start_time']).dt.total_seconds()
+        
         df['date'] = df['start_time'].dt.date
         grouped_data = df.groupby(['date', 'project_code'])['duration_seconds'].sum()
         with open(REPORT_FILE, "w") as f:
@@ -186,6 +188,7 @@ class TimeTrackerApp(ctk.CTk):
 
     def ensure_log_file_exists(self):
         if not os.path.exists(LOG_FILE):
+            # --- UPDATED: The created file no longer has the duration_seconds column ---
             pd.DataFrame(columns=["project_code", "start_time", "end_time"]).to_csv(LOG_FILE, index=False)
             print(f"Log file created: {LOG_FILE}")
     
