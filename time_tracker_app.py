@@ -7,24 +7,26 @@ import subprocess
 import tempfile
 import tkinter
 from tkinter import messagebox
+import psutil
 
 # --- Configuration ---
 LOG_FILE = "time_log.csv"
 REPORT_FILE = "time_report.txt"
 ICON_FILE = "icon.ico"
-LOCK_FILE_PATH = os.path.join(tempfile.gettempdir(), "time_tracker.lock")
 MAX_RECENT_PROJECTS = 15
 
 # --- Main Application Class ---
 class TimeTrackerApp(ctk.CTk):
-    def __init__(self, lock_file_handle):
+    def __init__(self):
         super().__init__()
         
-        self.lock_file_handle = lock_file_handle
         self.title("Time Tracker")
         ctk.set_appearance_mode("dark")
         self.attributes('-topmost', True)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # Clean up old log entries on startup
+        self.clean_up_old_logs()
 
         self.running_project_code = None
         self.start_time = None
@@ -45,14 +47,31 @@ class TimeTrackerApp(ctk.CTk):
     def on_closing(self):
         if self.running_project_code:
             self.stop_timer(is_closing=True)
-        
-        try:
-            self.lock_file_handle.close()
-            os.remove(LOCK_FILE_PATH)
-        except Exception as e:
-            print(f"Could not remove lock file: {e}")
-            
         self.destroy()
+
+    def clean_up_old_logs(self):
+        """Removes log entries older than two months."""
+        if not os.path.exists(LOG_FILE):
+            return
+        try:
+            df = pd.read_csv(LOG_FILE)
+            if df.empty:
+                return
+
+            df['start_time'] = pd.to_datetime(df['start_time'])
+            cutoff_date = pd.Timestamp.now() - pd.DateOffset(months=2)
+            
+            original_rows = len(df)
+            df = df[df['start_time'] >= cutoff_date]
+            rows_after = len(df)
+            
+            df.to_csv(LOG_FILE, index=False)
+
+            deleted_count = original_rows - rows_after
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} log entries older than two months.")
+        except Exception as e:
+            print(f"Error during log cleanup: {e}")
 
     def create_widgets(self):
         self.stopped_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -99,7 +118,6 @@ class TimeTrackerApp(ctk.CTk):
     def stop_timer(self, is_closing=False):
         if not self.running_project_code: return
         end_time = datetime.datetime.now()
-        # --- UPDATED: The log entry no longer contains duration ---
         log_entry = { 
             "project_code": [self.running_project_code], 
             "start_time": [self.start_time.strftime("%Y-%m-%d %H:%M:%S")], 
@@ -122,6 +140,7 @@ class TimeTrackerApp(ctk.CTk):
         try:
             if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0: return []
             
+            # Force the 'project_code' column to be read as a string
             df = pd.read_csv(LOG_FILE, dtype={'project_code': str})
 
             if df.empty: return []
@@ -137,20 +156,13 @@ class TimeTrackerApp(ctk.CTk):
         if not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0:
             messagebox.showinfo("Report", "Log file is empty.")
             return
-            
-        # --- UPDATED: Report generation now calculates duration on the fly ---
         df = pd.read_csv(LOG_FILE)
         if df.empty:
             messagebox.showinfo("Report", "Log file is empty.")
             return
-        
-        # Convert time columns to datetime objects
         df['start_time'] = pd.to_datetime(df['start_time'])
         df['end_time'] = pd.to_datetime(df['end_time'])
-        
-        # Calculate duration in seconds
         df['duration_seconds'] = (df['end_time'] - df['start_time']).dt.total_seconds()
-        
         df['date'] = df['start_time'].dt.date
         grouped_data = df.groupby(['date', 'project_code'])['duration_seconds'].sum()
         with open(REPORT_FILE, "w") as f:
@@ -174,7 +186,6 @@ class TimeTrackerApp(ctk.CTk):
 
     def ensure_log_file_exists(self):
         if not os.path.exists(LOG_FILE):
-            # --- UPDATED: Create file without the duration_seconds column ---
             pd.DataFrame(columns=["project_code", "start_time", "end_time"]).to_csv(LOG_FILE, index=False)
             print(f"Log file created: {LOG_FILE}")
     
@@ -188,14 +199,23 @@ class TimeTrackerApp(ctk.CTk):
 # --- Main execution block ---
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
+
+    process_name = "TimeTracker.exe"
+    instance_count = 0
+    for proc in psutil.process_iter(['name']):
+        if proc.info['name'] == process_name:
+            instance_count += 1
     
-    try:
-        lock_file = open(LOCK_FILE_PATH, 'x')
-        app = TimeTrackerApp(lock_file_handle=lock_file)
-        app.mainloop()
-    except FileExistsError:
+    if instance_count > 1:
         messagebox.showerror(
             "Application Already Running",
             "Another instance of Time Tracker is already running."
         )
+        sys.exit(1)
+
+    try:
+        app = TimeTrackerApp()
+        app.mainloop()
+    except Exception as e:
+        messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
         sys.exit(1)
